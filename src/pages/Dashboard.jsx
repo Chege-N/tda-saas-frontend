@@ -365,8 +365,10 @@ function BillingTab({ pay, PLANS }) {
             )}
             <div className="text-xl font-bold mb-1">{plan.name}</div>
             <div className="text-3xl font-bold mb-1">
-              ${plan.price}<span className="text-base text-gray-400">/mo</span>
+              KES {plan.price_kes?.toLocaleString()}
+              <span className="text-base text-gray-400">/mo</span>
             </div>
+            <div className="text-gray-500 text-xs mb-1">(≈ ${plan.price_usd} USD)</div>
             <div className="text-gray-400 text-sm mb-6">
               {plan.requests === -1 ? 'Unlimited' : plan.requests.toLocaleString()} requests/month
             </div>
@@ -378,7 +380,7 @@ function BillingTab({ pay, PLANS }) {
                   ? 'bg-blue-600 hover:bg-blue-500'
                   : 'bg-gray-700 hover:bg-gray-600'
               } disabled:opacity-50`}>
-              {paying === key ? 'Opening payment...' : `Pay $${plan.price}/mo`}
+              {paying === key ? 'Opening payment...' : `Pay KES ${plan.price_kes?.toLocaleString()}/mo`}
             </button>
           </div>
         ))}

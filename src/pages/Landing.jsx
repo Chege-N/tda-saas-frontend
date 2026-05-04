@@ -28,6 +28,7 @@ const PRICING = [
     key:      'starter',
     name:     'Starter',
     price:    29,
+    price_kes: 3800,
     requests: '1,000',
     features: ['All 5 disruption scenarios', 'REST API access', 'Anomaly alerts', 'Email support'],
     cta:      'Get Started',
@@ -37,6 +38,7 @@ const PRICING = [
     key:      'pro',
     name:     'Pro',
     price:    79,
+    price_kes: 10200,
     requests: '10,000',
     features: ['Everything in Starter', 'Persistence diagrams', 'Network heatmaps', 'Priority support', 'Webhook alerts'],
     cta:      'Go Pro',
@@ -46,6 +48,7 @@ const PRICING = [
     key:      'enterprise',
     name:     'Enterprise',
     price:    199,
+    price_kes: 25700,
     requests: 'Unlimited',
     features: ['Everything in Pro', 'Custom scenarios', 'Dedicated instance', 'SLA guarantee', 'Integration support'],
     cta:      'Contact Us',
@@ -155,8 +158,10 @@ export default function Landing() {
               )}
               <div className="text-2xl font-bold mb-1">{p.name}</div>
               <div className="text-4xl font-bold mb-1">
-                ${p.price}<span className="text-lg text-gray-400">/mo</span>
+                KES {p.price_kes.toLocaleString()}
+                <span className="text-lg text-gray-400">/mo</span>
               </div>
+              <div className="text-gray-500 text-sm mb-1">≈ ${p.price} USD</div>
               <div className="text-gray-400 text-sm mb-6">
                 {p.requests} API requests/month
               </div>
