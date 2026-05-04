@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../lib/api'
 import { usePaystack } from '../lib/paystack'
+import { usePlan } from '../hooks/usePlan'
 
 const SCENARIOS = [
   { key: 'suez_blockage',      label: 'Suez Blockage',       icon: '🚢' },
@@ -31,6 +32,7 @@ function MetricCard({ label, value, sub, color = 'text-blue-400' }) {
 export default function Dashboard() {
   const { user, signOut }  = useAuth()
   const { pay, PLANS }     = usePaystack()
+  const { plan, requestsLeft, isExpired } = usePlan()
 
   const [scenario,  setScenario]  = useState('suez_blockage')
   const [steps,     setSteps]     = useState(30)
@@ -88,6 +90,30 @@ export default function Dashboard() {
           </button>
         </div>
       </nav>
+
+      {/* ── Plan status bar ── */}
+      <div className={`px-6 py-2 text-sm flex items-center justify-between border-b ${
+        isExpired
+          ? 'bg-red-900/20 border-red-800 text-red-300'
+          : plan.plan === 'free'
+            ? 'bg-yellow-900/20 border-yellow-800 text-yellow-300'
+            : 'bg-green-900/20 border-green-800 text-green-300'
+      }`}>
+        <span>
+          Plan: <strong className="capitalize">{plan.plan}</strong>
+          {' · '}
+          {requestsLeft === Infinity
+            ? 'Unlimited requests'
+            : `${requestsLeft} requests remaining`}
+          {isExpired && ' · EXPIRED'}
+        </span>
+        {(plan.plan === 'free' || isExpired) && (
+          <button onClick={() => setTab('billing')}
+            className="underline hover:no-underline font-medium">
+            Upgrade →
+          </button>
+        )}
+      </div>
 
       <div className="max-w-6xl mx-auto px-6 py-8">
 
