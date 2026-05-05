@@ -319,7 +319,7 @@ export default function Dashboard() {
 
         {/* ════════ BILLING TAB ════════ */}
         {tab === 'billing' && (
-          <BillingTab pay={pay} PLANS={PLANS} />
+          <BillingTab pay={pay} PLANS={PLANS} userEmail={user?.email} />
         )}
       </div>
     </div>
@@ -512,16 +512,72 @@ function ApiKeysTab() {
     </div>
   )
 }
-function BillingTab({ pay, PLANS }) {
-  const [paying, setPaying] = useState(null)
+function BillingTab({ pay, PLANS, userEmail }) {
+  const { plan: currentPlan } = usePlan()
+  const [paying,  setPaying]  = useState(null)   // which plan is being paid
+  const [paid,    setPaid]    = useState(null)    // which plan was just paid (success)
+  const [errorMsg, setErrorMsg] = useState('')
 
   function handlePay(planKey) {
+    // Guard 1: already processing a payment
+    if (paying) return
+
+    // Guard 2: already on this plan
+    if (currentPlan.plan === planKey) {
+      setErrorMsg(`You are already on the ${PLANS[planKey].name} plan.`)
+      return
+    }
+
+    // Guard 3: was just paid (idempotency window — 5 seconds)
+    if (paid === planKey) return
+
+    setErrorMsg('')
     setPaying(planKey)
+
     pay(planKey, (ref, plan) => {
-      alert(`✅ Payment successful!\nPlan: ${plan.name}\nRef: ${ref}\n\nYour account will be upgraded within a few minutes.`)
+      // Payment confirmed by Paystack
+      setPaid(planKey)
       setPaying(null)
+      // Clear paid state after 5s so user can pay again if needed
+      setTimeout(() => setPaid(null), 5000)
+      setErrorMsg('')
+      // Show success inline — no alert()
     })
-    setPaying(null)
+
+    // NOTE: do NOT call setPaying(null) here synchronously.
+    // The Paystack popup is still open. We only clear paying
+    // inside the callback (success) or on window close below.
+  }
+
+  // Listen for popup close without payment completing
+  // Paystack calls onClose when user dismisses the popup
+  function handlePayWithClose(planKey) {
+    if (paying || paid === planKey) return
+    if (currentPlan.plan === planKey) {
+      setErrorMsg(`You are already on the ${PLANS[planKey].name} plan.`)
+      return
+    }
+    setErrorMsg('')
+    setPaying(planKey)
+
+    const handler = window.PaystackPop?.setup({
+      key:      import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+      email:    userEmail,
+      amount:   PLANS[planKey].amount_kes,
+      currency: 'KES',
+      ref:      `tda_${planKey}_${Date.now()}`,
+      metadata: { plan: planKey },
+      callback: (response) => {
+        setPaid(planKey)
+        setPaying(null)
+        setTimeout(() => setPaid(null), 5000)
+      },
+      onClose: () => {
+        // User closed popup without paying — re-enable button
+        setPaying(null)
+      },
+    })
+    handler?.openIframe()
   }
 
   return (
@@ -532,40 +588,73 @@ function BillingTab({ pay, PLANS }) {
           Pay securely with card or M-Pesa via Paystack.
         </p>
       </div>
+
+      {errorMsg && (
+        <div className="p-3 bg-yellow-900/30 border border-yellow-700 rounded-xl text-yellow-300 text-sm">
+          {errorMsg}
+        </div>
+      )}
+
+      {paid && (
+        <div className="p-4 bg-green-900/20 border border-green-700 rounded-xl text-green-300 text-sm">
+          ✅ Payment received! Your plan will upgrade within 1–2 minutes.
+          Check the green bar at the top — it will update automatically.
+        </div>
+      )}
+
       <div className="grid md:grid-cols-3 gap-6">
-        {Object.entries(PLANS).map(([key, plan]) => (
-          <div key={key}
-            className={`p-6 rounded-2xl border flex flex-col ${
-              key === 'pro'
-                ? 'border-blue-500 bg-blue-900/20'
-                : 'border-gray-800 bg-gray-900'
-            }`}>
-            {key === 'pro' && (
-              <div className="text-xs text-blue-300 font-semibold uppercase tracking-wider mb-3">
-                Most Popular
+        {Object.entries(PLANS).map(([key, plan]) => {
+          const isCurrentPlan = currentPlan.plan === key
+          const isBeingPaid   = paying === key
+          const justPaid      = paid   === key
+          const isDisabled    = isBeingPaid || justPaid || isCurrentPlan || !!paying
+
+          return (
+            <div key={key}
+              className={`p-6 rounded-2xl border flex flex-col ${
+                isCurrentPlan
+                  ? 'border-green-600 bg-green-900/10'
+                  : key === 'pro'
+                    ? 'border-blue-500 bg-blue-900/20'
+                    : 'border-gray-800 bg-gray-900'
+              }`}>
+              {isCurrentPlan && (
+                <div className="text-xs text-green-300 font-semibold uppercase tracking-wider mb-3">
+                  ✓ Current Plan
+                </div>
+              )}
+              {!isCurrentPlan && key === 'pro' && (
+                <div className="text-xs text-blue-300 font-semibold uppercase tracking-wider mb-3">
+                  Most Popular
+                </div>
+              )}
+              <div className="text-xl font-bold mb-1">{plan.name}</div>
+              <div className="text-3xl font-bold mb-1">
+                KES {plan.price_kes?.toLocaleString()}
+                <span className="text-base text-gray-400">/mo</span>
               </div>
-            )}
-            <div className="text-xl font-bold mb-1">{plan.name}</div>
-            <div className="text-3xl font-bold mb-1">
-              KES {plan.price_kes?.toLocaleString()}
-              <span className="text-base text-gray-400">/mo</span>
+              <div className="text-gray-500 text-xs mb-1">(≈ ${plan.price_usd} USD)</div>
+              <div className="text-gray-400 text-sm mb-6">
+                {plan.requests === -1 ? 'Unlimited' : plan.requests.toLocaleString()} requests/month
+              </div>
+              <button
+                onClick={() => handlePayWithClose(key)}
+                disabled={isDisabled}
+                className={`mt-auto py-3 rounded-xl font-semibold transition ${
+                  isCurrentPlan
+                    ? 'bg-green-900/30 text-green-400 cursor-default'
+                    : key === 'pro'
+                      ? 'bg-blue-600 hover:bg-blue-500 disabled:opacity-50'
+                      : 'bg-gray-700 hover:bg-gray-600 disabled:opacity-50'
+                } disabled:cursor-not-allowed`}>
+                {isCurrentPlan  ? '✓ Active'           :
+                 isBeingPaid    ? 'Opening payment...' :
+                 justPaid       ? '✓ Payment received' :
+                 `Pay KES ${plan.price_kes?.toLocaleString()}/mo`}
+              </button>
             </div>
-            <div className="text-gray-500 text-xs mb-1">(≈ ${plan.price_usd} USD)</div>
-            <div className="text-gray-400 text-sm mb-6">
-              {plan.requests === -1 ? 'Unlimited' : plan.requests.toLocaleString()} requests/month
-            </div>
-            <button
-              onClick={() => handlePay(key)}
-              disabled={paying === key}
-              className={`mt-auto py-3 rounded-xl font-semibold transition ${
-                key === 'pro'
-                  ? 'bg-blue-600 hover:bg-blue-500'
-                  : 'bg-gray-700 hover:bg-gray-600'
-              } disabled:opacity-50`}>
-              {paying === key ? 'Opening payment...' : `Pay KES ${plan.price_kes?.toLocaleString()}/mo`}
-            </button>
-          </div>
-        ))}
+          )
+        })}
       </div>
       <p className="text-gray-500 text-xs text-center">
         Payments processed securely by Paystack · M-Pesa, Visa, Mastercard accepted
