@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { supabase } from '../lib/supabase'
 import { api } from '../lib/api'
 import { usePaystack } from '../lib/paystack'
-import { usePlan } from '../hooks/usePlan'
+import { usePlan } from '../hooks/usePlan.js'
 
 const SCENARIOS = [
   { key: 'suez_blockage',      label: 'Suez Blockage',       icon: '🚢' },
@@ -122,6 +123,7 @@ export default function Dashboard() {
           {[
             { key: 'simulate', label: '🔬 Simulate'   },
             { key: 'alerts',   label: '🔔 Alerts'     },
+            { key: 'keys',     label: '🔑 API Keys'   },
             { key: 'billing',  label: '💳 Billing'    },
           ].map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
@@ -312,6 +314,9 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* ════════ API KEYS TAB ════════ */}
+        {tab === 'keys' && <ApiKeysTab userId={user?.id} />}
+
         {/* ════════ BILLING TAB ════════ */}
         {tab === 'billing' && (
           <BillingTab pay={pay} PLANS={PLANS} />
@@ -355,7 +360,158 @@ function AlertsFeed() {
   )
 }
 
-/* ── Billing tab component ── */
+/* ── API Keys Tab component ── */
+function ApiKeysTab() {
+  const { user } = useAuth()
+  const [keys,    setKeys]    = useState([])
+  const [loading, setLoading] = useState(true)
+  const [name,    setName]    = useState('')
+  const [newKey,  setNewKey]  = useState(null)   // shown once after generation
+  const [error,   setError]   = useState('')
+  const [creating, setCreating] = useState(false)
+
+  async function fetchKeys() {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch('/api/keys', {
+        headers: { Authorization: `Bearer ${session?.access_token}` }
+      })
+      const d = await res.json()
+      setKeys(d.keys ?? [])
+    } catch (e) { setError(e.message) }
+    finally { setLoading(false) }
+  }
+
+  async function createKey() {
+    if (!name.trim()) return
+    setCreating(true)
+    setError('')
+    setNewKey(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch('/api/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ name }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error)
+      setNewKey(d.key)
+      setName('')
+      fetchKeys()
+    } catch (e) { setError(e.message) }
+    finally { setCreating(false) }
+  }
+
+  async function revokeKey(id) {
+    const { data: { session } } = await supabase.auth.getSession()
+    await fetch(`/api/keys?id=${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${session?.access_token}` }
+    })
+    fetchKeys()
+  }
+
+  useEffect(() => { fetchKeys() }, [])
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+        <h2 className="text-lg font-semibold mb-1">API Keys</h2>
+        <p className="text-gray-400 text-sm mb-6">
+          Use API keys to access your endpoints programmatically — no browser login needed.
+          Pass as <code className="bg-gray-800 px-1 rounded text-blue-300">X-API-Key: tda_live_xxx</code> header.
+        </p>
+
+        {/* New key form */}
+        <div className="flex gap-3 mb-6">
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder='Key name (e.g. "Production server")'
+            className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-xl
+                       focus:outline-none focus:border-blue-500 text-sm"
+          />
+          <button onClick={createKey} disabled={creating || !name.trim()}
+            className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50
+                       rounded-xl text-sm font-medium transition">
+            {creating ? 'Creating...' : '+ Generate Key'}
+          </button>
+        </div>
+
+        {/* New key display — shown once */}
+        {newKey && (
+          <div className="mb-6 p-4 bg-green-900/20 border border-green-700 rounded-xl">
+            <p className="text-green-300 font-semibold text-sm mb-2">
+              ✓ Key generated — copy it now, it won't be shown again
+            </p>
+            <code className="block bg-gray-900 p-3 rounded-lg text-green-400 text-xs break-all select-all">
+              {newKey}
+            </code>
+            <button onClick={() => navigator.clipboard.writeText(newKey)}
+              className="mt-2 text-xs text-green-400 hover:underline">
+              Copy to clipboard
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-900/30 border border-red-700 rounded-lg text-red-300 text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Key list */}
+        {loading ? (
+          <p className="text-gray-400 text-sm">Loading keys...</p>
+        ) : keys.length === 0 ? (
+          <p className="text-gray-500 text-sm">No API keys yet. Generate one above.</p>
+        ) : (
+          <div className="space-y-3">
+            {keys.map(k => (
+              <div key={k.id}
+                className="flex items-center justify-between p-4 bg-gray-800 rounded-xl border border-gray-700">
+                <div>
+                  <div className="font-medium text-sm">{k.name}</div>
+                  <div className="text-gray-400 text-xs mt-0.5 font-mono">{k.key_prefix}</div>
+                  <div className="text-gray-500 text-xs mt-0.5">
+                    Created {new Date(k.created_at).toLocaleDateString()}
+                    {k.last_used_at && ` · Last used ${new Date(k.last_used_at).toLocaleDateString()}`}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`text-xs px-2 py-0.5 rounded-full border ${
+                    k.is_active
+                      ? 'text-green-400 border-green-800 bg-green-900/20'
+                      : 'text-gray-500 border-gray-700'
+                  }`}>
+                    {k.is_active ? 'Active' : 'Revoked'}
+                  </span>
+                  {k.is_active && (
+                    <button onClick={() => revokeKey(k.id)}
+                      className="text-xs text-red-400 hover:underline">
+                      Revoke
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Usage example */}
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+        <h3 className="font-semibold mb-4">Usage Example</h3>
+        <pre className="bg-gray-950 rounded-xl p-4 text-sm text-green-300 overflow-x-auto">{`curl -X POST https://tda-saas-frontend.vercel.app/api/simulate \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: tda_live_your_key_here" \\
+  -H "Idempotency-Key: unique-request-id-123" \\
+  -d '{"scenario":"suez_blockage","n_steps":30,"n_nodes":20}'`}</pre>
+      </div>
+    </div>
+  )
+}
 function BillingTab({ pay, PLANS }) {
   const [paying, setPaying] = useState(null)
 
