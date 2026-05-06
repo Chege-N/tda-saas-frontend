@@ -14,6 +14,7 @@
 
 import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
+import { getSupabaseAdmin } from './_middleware.js'
 
 // ── Plan definitions (must match src/lib/paystack.js) ──────────────────────
 const PLAN_REQUESTS = {
