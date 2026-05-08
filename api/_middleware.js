@@ -25,22 +25,39 @@ export function getSupabaseAdmin() {
   )
 }
 
-// ── Rate limiter (10 requests / 10 seconds per IP) ─────────────────────────
+// ── Rate limiters — one per plan tier ─────────────────────────────────────
 // Falls back gracefully if Upstash is not configured
-let ratelimiter = null
-function getRateLimiter() {
-  if (ratelimiter) return ratelimiter
+const limiters = {}
+
+function getRedis() {
   if (!process.env.UPSTASH_REDIS_REST_URL) return null
-  const redis = new Redis({
+  return new Redis({
     url:   process.env.UPSTASH_REDIS_REST_URL,
     token: process.env.UPSTASH_REDIS_REST_TOKEN,
   })
-  ratelimiter = new Ratelimit({
+}
+
+function getLimiter(plan = 'free') {
+  const redis = getRedis()
+  if (!redis) return null
+
+  if (limiters[plan]) return limiters[plan]
+
+  // Per-plan rate limits — requests per 10 seconds
+  const windows = {
+    free:       Ratelimit.slidingWindow(3,   '10 s'),  // 3  req/10s  (~18k/day)
+    starter:    Ratelimit.slidingWindow(10,  '10 s'),  // 10 req/10s  (~86k/day)
+    pro:        Ratelimit.slidingWindow(30,  '10 s'),  // 30 req/10s  (~259k/day)
+    enterprise: Ratelimit.slidingWindow(100, '10 s'),  // 100 req/10s (no effective limit)
+  }
+
+  limiters[plan] = new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(10, '10 s'),
+    limiter:   windows[plan] ?? windows.free,
+    prefix:    `tda_rl_${plan}`,
     analytics: true,
   })
-  return ratelimiter
+  return limiters[plan]
 }
 
 // ── CORS headers ───────────────────────────────────────────────────────────
@@ -177,18 +194,24 @@ export function withAuth(handler, options = {}) {
 
     const supabase = getSupabaseAdmin()
 
-    // ── 1. Rate limiting ──────────────────────────────────────────────────
-    const limiter = getRateLimiter()
-    if (limiter) {
-      const ip = req.headers['x-forwarded-for']?.split(',')[0] ?? 'unknown'
-      const { success, limit, remaining, reset } = await limiter.limit(ip)
-      res.setHeader('X-RateLimit-Limit',     limit)
-      res.setHeader('X-RateLimit-Remaining', remaining)
-      res.setHeader('X-RateLimit-Reset',     reset)
-      if (!success) {
+    // ── 1. IP-based abuse guard (before auth — cheapest check first) ─────
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() ?? 'unknown'
+
+    // Hard IP block: 100 requests per minute regardless of plan
+    // Catches scrapers, credential stuffers, DDoS before auth runs
+    const abuseRedis = getRedis()
+    if (abuseRedis) {
+      const abuseLimiter = new Ratelimit({
+        redis:   abuseRedis,
+        limiter: Ratelimit.slidingWindow(100, '60 s'),
+        prefix:  'tda_abuse',
+      })
+      const { success: notAbusive } = await abuseLimiter.limit(ip)
+      if (!notAbusive) {
         return res.status(429).json({
-          error: 'Too many requests',
-          retry_after: Math.ceil((reset - Date.now()) / 1000),
+          error:       'Too many requests from this IP',
+          retry_after: 60,
+          support:     'contact@tda-supply-chain.io',
         })
       }
     }
@@ -209,6 +232,34 @@ export function withAuth(handler, options = {}) {
           reason:  planData.reason,
           plan:    planData.plan,
           upgrade: 'https://tda-saas-frontend.vercel.app/#pricing',
+        })
+      }
+    }
+
+    // ── 3b. Plan-aware rate limiting (per user_id, not per IP) ───────────
+    // Applied after plan is known so each tier gets its own window
+    const planLimiter = getLimiter(planData.plan)
+    if (planLimiter) {
+      const { success, limit, remaining, reset } =
+        await planLimiter.limit(identity.user_id)
+
+      res.setHeader('X-RateLimit-Limit',     String(limit))
+      res.setHeader('X-RateLimit-Remaining', String(remaining))
+      res.setHeader('X-RateLimit-Reset',     String(reset))
+      res.setHeader('X-RateLimit-Plan',      planData.plan)
+
+      if (!success) {
+        return res.status(429).json({
+          error:       'Rate limit exceeded for your plan',
+          plan:        planData.plan,
+          retry_after: Math.ceil((reset - Date.now()) / 1000),
+          upgrade:     'https://tda-saas-frontend.vercel.app/#pricing',
+          limits: {
+            free:       '3 req/10s',
+            starter:    '10 req/10s',
+            pro:        '30 req/10s',
+            enterprise: '100 req/10s',
+          },
         })
       }
     }
