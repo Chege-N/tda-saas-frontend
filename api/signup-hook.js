@@ -21,6 +21,11 @@ function verifySupabaseWebhook(rawBody, signature) {
 }
 
 export default async function handler(req, res) {
+  // Supabase sends a GET request first to verify the endpoint exists
+  if (req.method === 'GET') {
+    return res.status(200).json({ status: 'ok', hook: 'signup' })
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
