@@ -21,7 +21,6 @@ function verifySupabaseWebhook(rawBody, signature) {
 }
 
 export default async function handler(req, res) {
-  // Supabase sends a GET request first to verify the endpoint exists
   if (req.method === 'GET') {
     return res.status(200).json({ status: 'ok', hook: 'signup' })
   }
@@ -30,25 +29,39 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  // Verify the request came from Supabase
-  const sig = req.headers['x-supabase-signature'] ?? ''
-  if (!verifySupabaseWebhook(JSON.stringify(req.body), sig)) {
-    return res.status(401).json({ error: 'Invalid signature' })
+  try {
+    console.log('BODY:', req.body)
+
+    const { record } = req.body ?? {}
+    const email = record?.email
+    const userId = record?.id
+
+    if (!email) {
+      return res.status(400).json({ error: 'No email in payload' })
+    }
+
+    console.log(`[signup-hook] New user: ${email} (${userId})`)
+
+    const emailPayload = welcomeEmail(email, 'free')
+
+    console.log('EMAIL PAYLOAD:', emailPayload)
+
+    const result = await sendEmail(emailPayload)
+
+    console.log('EMAIL RESULT:', result)
+
+    return res.status(200).json({
+      received: true,
+      email_sent: !result?.error
+    })
+
+  } catch (err) {
+    console.error('SIGNUP HOOK ERROR:')
+    console.error(err)
+
+    return res.status(500).json({
+      error: err.message,
+      stack: err.stack
+    })
   }
-
-  const { record } = req.body ?? {}
-  const email = record?.email
-  const userId = record?.id
-
-  if (!email) {
-    return res.status(400).json({ error: 'No email in payload' })
-  }
-
-  console.log(`[signup-hook] New user: ${email} (${userId})`)
-
-  // Send welcome email
-  const result = await sendEmail(welcomeEmail(email, 'free'))
-  console.log(`[signup-hook] Welcome email: ${result.id ?? result.error}`)
-
-  return res.status(200).json({ received: true, email_sent: !result.error })
 }
