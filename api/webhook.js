@@ -15,6 +15,8 @@
 import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 import { getSupabaseAdmin } from './_middleware.js'
+import { sendEmail } from './lib/mailer.js'
+import { paymentSuccessEmail } from './lib/emails.js'
 
 // ── Plan definitions (must match src/lib/paystack.js) ──────────────────────
 const PLAN_REQUESTS = {
@@ -108,6 +110,16 @@ export default async function handler(req, res) {
       }
 
       console.log(`Plan upgraded: user=${user_id} → ${plan}`)
+
+      // Send payment confirmation email — non-blocking, never fails the webhook
+      const PLAN_PRICES_KES = { starter: 3800, pro: 10200, enterprise: 25700 }
+      sendEmail(paymentSuccessEmail(
+        customer?.email ?? '',
+        plan,
+        reference,
+        PLAN_PRICES_KES[plan] ?? 0
+      )).catch(e => console.error('[webhook] Email error:', e.message))
+
       return res.status(200).json({ received: true, upgraded: true })
 
     } catch (err) {
