@@ -22,7 +22,7 @@ function verifySupabaseWebhook(rawBody, signature) {
 
 export default async function handler(req, res) {
   if (req.method === 'GET') {
-    return res.status(200).json({ status: 'ok', hook: 'signup' })
+    return res.status(200).json({ status: 'ok' })
   }
 
   if (req.method !== 'POST') {
@@ -30,38 +30,22 @@ export default async function handler(req, res) {
   }
 
   try {
-    console.log('BODY:', req.body)
-
     const { record } = req.body ?? {}
-    const email = record?.email
-    const userId = record?.id
 
-    if (!email) {
-      return res.status(400).json({ error: 'No email in payload' })
+    const email = record?.email
+
+    if (email) {
+      await sendEmail(welcomeEmail(email, 'free'))
     }
 
-    console.log(`[signup-hook] New user: ${email} (${userId})`)
-
-    const emailPayload = welcomeEmail(email, 'free')
-
-    console.log('EMAIL PAYLOAD:', emailPayload)
-
-    const result = await sendEmail(emailPayload)
-
-    console.log('EMAIL RESULT:', result)
-
-    return res.status(200).json({
-      received: true,
-      email_sent: !result?.error
-    })
+    // IMPORTANT:
+    return res.status(200).json(req.body)
 
   } catch (err) {
-    console.error('SIGNUP HOOK ERROR:')
     console.error(err)
 
     return res.status(500).json({
-      error: err.message,
-      stack: err.stack
+      error: err.message
     })
   }
 }
