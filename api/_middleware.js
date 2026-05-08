@@ -156,9 +156,71 @@ async function saveIdempotency(key, user_id, responseBody, supabase) {
   }, { onConflict: 'key' })
 }
 
-// ── Usage increment ────────────────────────────────────────────────────────
+// ── Usage increment with quota warning emails ──────────────────────────────
 export async function incrementUsage(user_id, supabase) {
+  // Atomic increment
   await supabase.rpc('increment_requests_used', { p_user_id: user_id })
+
+  // Check if we need to send a quota warning email (non-blocking)
+  checkQuotaAndNotify(user_id, supabase).catch(e =>
+    console.error('[middleware] Quota check error:', e.message)
+  )
+}
+
+async function checkQuotaAndNotify(user_id, supabase) {
+  const { data } = await supabase
+    .from('user_plans')
+    .select('plan, requests_limit, requests_used, email')
+    .eq('user_id', user_id)
+    .single()
+
+  if (!data || data.requests_limit === -1) return  // unlimited plan
+
+  const percent = Math.round((data.requests_used / data.requests_limit) * 100)
+  const email   = data.email
+
+  if (!email) return
+
+  // Import email functions lazily to avoid circular deps
+  const { sendEmail }          = await import('./lib/mailer.js')
+  const { quotaWarningEmail, quotaExceededEmail } = await import('./lib/emails.js')
+
+  // Send at 80% and 95% — but not repeatedly (check last_warning_sent)
+  if (percent >= 100) {
+    // Check we haven't already sent exceeded email this month
+    const { data: flag } = await supabase
+      .from('email_flags')
+      .select('id')
+      .eq('user_id', user_id)
+      .eq('flag', 'quota_exceeded_sent')
+      .gte('created_at', new Date(new Date().setDate(1)).toISOString())  // this month
+      .single()
+
+    if (!flag) {
+      await sendEmail(quotaExceededEmail(email, data.plan, data.requests_limit))
+      await supabase.from('email_flags').insert({
+        user_id, flag: 'quota_exceeded_sent', created_at: new Date().toISOString()
+      })
+    }
+  } else if (percent >= 80) {
+    const flagName = percent >= 95 ? 'quota_95_sent' : 'quota_80_sent'
+    const { data: flag } = await supabase
+      .from('email_flags')
+      .select('id')
+      .eq('user_id', user_id)
+      .eq('flag', flagName)
+      .gte('created_at', new Date(new Date().setDate(1)).toISOString())
+      .single()
+
+    if (!flag) {
+      await sendEmail(quotaWarningEmail(
+        email, data.plan, data.requests_used, data.requests_limit, percent
+      ))
+      await supabase.from('email_flags').insert({
+        user_id, flag: flagName, created_at: new Date().toISOString()
+      })
+    }
+  }
 }
 
 // ── API key hashing ────────────────────────────────────────────────────────
